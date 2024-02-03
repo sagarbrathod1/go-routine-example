@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
 const apiKey = "test_key"
 
-func fetchStockPrice(symbol string) string {
-	url := fmt.Sprintf("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=%s&apikey=%s", symbol, apiKey)
+// Added new function parameters: 1) a channel, 2) a pointer to a WaitGroup
+func fetchStockPrice(symbol string, ch chan<-string, wg *sync.WaitGroup) string {
+	defer wg.Done() // Ensure that the WaitGroup is closed when the function exits
 	
-	// Make a GET request to the Alpha Vantage API
+	url := fmt.Sprintf("https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=%s&apikey=%s", symbol, apiKey)
+
 	response, err := http.Get(url)
 	if err != nil {
 		panic(err)
@@ -20,28 +23,40 @@ func fetchStockPrice(symbol string) string {
 
 	defer response.Body.Close()
 
-	// Read the response body
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		panic(err)
 	}
 
-	// Return the response body as a string
+	ch <- fmt.Sprintf("%s: %s", symbol, body) // Send the result to the channel
+
 	return string(body)
 }
 
 func main() {
-	// Record the start time
 	start := time.Now()
 
 	companies := []string{"META", "AMZN", "AAPL"}
 
-	// Fetch the stock price for each company
+	ch := make(chan string, len(companies)) // Create a buffered channel
+	var wg sync.WaitGroup // Create a WaitGroup
+
+	// Launch a goroutine for each company
 	for _, company := range companies {
-		price := fetchStockPrice(company)
-		fmt.Println(company, price)
+		wg.Add(1) // Increment the WaitGroup counter
+		go fetchStockPrice(company, ch, &wg) // Pass the function into a goroutine
 	}
 
-  // Log the total time taken to execute the API calls
+	// Wait for all the goroutines to finish and close the channel
+	go func() {
+		wg.Wait()
+		close(ch) 
+	}()
+
+	// Read the results from the channel
+	for result := range ch {
+		fmt.Println(result)
+	}
+
 	fmt.Println("Time taken:", time.Since(start))
 }
